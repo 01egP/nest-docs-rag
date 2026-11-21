@@ -10,9 +10,10 @@ export function createPool(config: Config): pg.Pool {
     password: config.DB_PASSWORD,
     database: config.DB_NAME,
     max: 5,
+    // Teach node-postgres to read the `vector` type as number[]. `onConnect` is awaited before the
+    // client is handed out; a plain 'connect' listener is not, and its query races the caller's.
+    onConnect: (client) => pgvector.registerTypes(client),
   });
-  // Teach node-postgres to send/receive the `vector` type as number[].
-  pool.on('connect', (client) => pgvector.registerTypes(client));
   return pool;
 }
 

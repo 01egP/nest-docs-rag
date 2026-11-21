@@ -12,6 +12,7 @@
     "dev:api": "npm run dev -w apps/api",
     "dev:web": "npm run dev -w apps/web",
     "smoke": "npm run smoke -w apps/api",
+    "ingest": "npm run ingest -w apps/api --",
     "test": "npm test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "db:up": "docker compose up -d",
