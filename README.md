@@ -80,9 +80,16 @@ question it embeds the query, takes the top 6 chunks and reports:
 npm run eval                        # the configured model's index
 npm run eval -- --suffix c400       # an experiment index built with the same --suffix
 npm run eval -- --verbose           # also print the top chunks of every question
+npm run eval -- --no-dedupe         # raw nearest neighbours, for comparison
+npm run eval -- --per-page 2        # also cap chunks per page
 npm run eval -- --report            # Markdown table of all saved runs
 ```
 
-Each run is saved to `reports/eval/<table>.json` (git-ignored).
+The search keeps at most one chunk per section (URL with anchor): it fetches the 30 nearest chunks
+and drops repeats, because a long section is split into several chunks and would otherwise take
+several of the k slots.
+
+Each run is saved to `reports/eval/<table>[__<variant>].json` (git-ignored); the variant names a
+non-default diversification (`raw`, `p2`).
 
 `npm test`, `npm run typecheck`, `npm run format:check` — the usual checks.

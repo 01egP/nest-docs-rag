@@ -4,8 +4,11 @@
  *   npm run eval                        current model, default index
  *   npm run eval -- --suffix c400       an experiment index built with the same --suffix
  *   npm run eval -- --verbose           also print the top chunks of every question
+ *   npm run eval -- --no-dedupe         raw nearest neighbours (default: one chunk per section)
+ *   npm run eval -- --per-page 2        also cap chunks per page
  *   npm run eval -- --report            Markdown table of all saved runs (for the README)
- * Each run is saved to reports/eval/<table>.json.
+ * Each run is saved to reports/eval/<table>[__<variant>].json; the variant names non-default
+ * diversification (`raw`, `p2`, ...).
  */
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -32,6 +35,8 @@ const KS = [1, 3, 6];
 
 interface EvalRun {
   table: string;
+  /** Diversification variant; '' = default (one chunk per section). */
+  variant?: string;
   embedder: string;
   date: string;
   k: number;
@@ -46,6 +51,8 @@ const { values: args } = parseArgs({
     suffix: { type: 'string' },
     k: { type: 'string' },
     verbose: { type: 'boolean', default: false },
+    'no-dedupe': { type: 'boolean', default: false },
+    'per-page': { type: 'string' },
     report: { type: 'boolean', default: false },
   },
 });
@@ -59,6 +66,13 @@ if (args.report) {
 }
 
 const k = args.k ? Number(args.k) : DEFAULT_TOP_K;
+const limits = {
+  maxPerSection: args['no-dedupe'] ? Infinity : 1,
+  maxPerPage: args['per-page'] ? Number(args['per-page']) : Infinity,
+};
+const variant = [args['no-dedupe'] ? 'raw' : '', args['per-page'] ? `p${args['per-page']}` : '']
+  .filter(Boolean)
+  .join('_');
 const config = loadConfig();
 const embedder = createEmbedder(config);
 const table = tableForConfig(config, args.suffix);
@@ -73,7 +87,7 @@ try {
     'query',
   );
   for (const [i, q] of questions.entries()) {
-    const hits = await searchChunks(pool, table, vectors[i]!, k);
+    const hits = await searchChunks(pool, table, vectors[i]!, { k, ...limits });
     const urls = hits.map((h) => h.url);
     results.push({
       id: q.id,
@@ -103,6 +117,7 @@ const ranksOf = (kind: EvalQuestion['kind']) => {
 };
 const run: EvalRun = {
   table,
+  variant,
   embedder: embedder.id,
   date: new Date().toISOString(),
   k,
@@ -116,7 +131,7 @@ const run: EvalRun = {
 };
 
 const rank = (r: number | null) => (r === null ? '—' : String(r));
-console.log(`${embedder.id} on ${table}, top-${k}\n`);
+console.log(`${embedder.id} on ${label(run)}, top-${k}\n`);
 console.log('id   kind       top    page sect  question');
 for (const [i, r] of results.entries()) {
   const q = questions[i]!;
@@ -144,7 +159,7 @@ if (t) {
 }
 
 mkdirSync(REPORTS, { recursive: true });
-const out = join(REPORTS, `${table}.json`);
+const out = join(REPORTS, `${variant ? `${table}__${variant}` : table}.json`);
 writeFileSync(out, `${JSON.stringify(run, null, 2)}\n`);
 console.log(`\nsaved ${out}`);
 
@@ -167,9 +182,13 @@ function printReport() {
   for (const r of runs.sort((a, b) => b.docs.page.mrr - a.docs.page.mrr)) {
     const p = r.docs.page;
     console.log(
-      `| \`${r.table}\` | ${pct(p.hitAt[1]!)} | ${pct(p.hitAt[3]!)} | ${pct(p.hitAt[6]!)} | ${f3(p.mrr)} | ` +
+      `| \`${label(r)}\` | ${pct(p.hitAt[1]!)} | ${pct(p.hitAt[3]!)} | ${pct(p.hitAt[6]!)} | ${f3(p.mrr)} | ` +
         `${pct(r.docs.section.hitAt[3]!)} | ${pct(r.tricky.page.hitAt[6]!)} | ` +
         `${r.threshold ? f3(r.threshold.minAnswerable) : '—'} | ${r.threshold ? f3(r.threshold.maxOffTopic) : '—'} |`,
     );
   }
+}
+
+function label(r: Pick<EvalRun, 'table' | 'variant'>) {
+  return r.variant ? `${r.table} (${r.variant})` : r.table;
 }
