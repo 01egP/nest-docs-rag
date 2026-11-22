@@ -5,7 +5,8 @@ documentation, with citations — or says the docs don't cover it. Runs fully lo
 embeddings and answers, Postgres + pgvector for search.
 
 > Work in progress. Done so far: repo scaffold, provider interfaces, local Ollama implementations,
-> indexing of the docs into pgvector, top-k search with cross-encoder reranking, a retrieval eval.
+> indexing of the docs into pgvector, top-k search with cross-encoder reranking, a retrieval eval,
+> `POST /ask` with citations. Next: streaming and the web page.
 
 ## Stack
 
@@ -34,7 +35,7 @@ npm install
 npm run db:up        # Postgres + pgvector on localhost:5433
 npm run smoke        # embed + rank two passages, then a JSON answer from the chat model
 npm run ingest       # clone the NestJS docs, chunk, embed into pgvector (a few minutes the first time)
-npm run dev:api      # http://127.0.0.1:3000/health
+npm run dev:api      # http://127.0.0.1:3000/health, POST /ask
 npm run dev:web      # http://localhost:5173
 ```
 
@@ -65,6 +66,64 @@ npm run ingest -- --offline                     # skip the git fetch
 EMBED_MODEL=nomic-embed-text npm run ingest     # a second index to compare models
 npm run ingest -- --suffix c400 --max-tokens 400   # a separate index for a chunk-size experiment
 ```
+
+## Asking
+
+```bash
+curl -s http://127.0.0.1:3000/ask -H 'content-type: application/json' \
+  -d '{"question": "How do I apply a guard to every route in the application?"}'
+```
+
+```jsonc
+{
+  "answered": true,
+  "answer": "… you can use the `useGlobalGuards()` method … `{ provide: APP_GUARD, useClass: RolesGuard }` [1].",
+  "citations": [
+    {
+      "n": 1,
+      "url": "https://docs.nestjs.com/guards#binding-guards",
+      "title": "Guards › Binding guards",
+      "content": "…",
+      "score": 0.97,
+    },
+  ],
+  "retrieval": {
+    "table": "chunks_bge_m3",
+    "reranked": true,
+    "topScore": 0.97,
+    "minScore": 0.1,
+    "sources": [/* all 6, as the model saw them */],
+  },
+  "generator": { "id": "ollama:qwen3:8b", "inputTokens": 2906, "outputTokens": 124 },
+  "timingsMs": { "search": 11063, "generate": 19018, "total": 30081 },
+}
+```
+
+The pipeline (`apps/api/src/ask/ask.ts`):
+
+1. **Search** — embed the question, top 6 chunks as above (reranked, one per section).
+2. **Threshold** — if the best score is below `ASK_MIN_SCORE`, the answer is "not in the docs" and the
+   LLM is not called (`reason: "below_threshold"`). Defaults come from the eval: 0.1 on the reranker's
+   score, 0.5 on bge-m3 cosine when reranking is off.
+3. **Answer** — the chunks go into the prompt numbered `[1]…[6]`, with their heading path but no URL,
+   and the model answers through structured output: `{answerable, answer, citations}`. The threshold
+   only stops clearly unrelated questions; one about a neighbouring framework (Angular routing) shares
+   the docs' vocabulary and passes it, so `answerable: false` is the second refusal
+   (`reason: "model_declined"`).
+4. **Citations** — the server keeps only numbers that point at a chunk it actually sent (in the list
+   and in the `[n]` markers of the text) and attaches that chunk's URL and text itself, so a source
+   can't be made up. An answer left with no valid citation is refused (`reason: "no_citations"`).
+
+The refusal text follows the language of the question (Russian or English); the answer itself is
+written in the language of the question too, while the docs are English.
+
+All 15 eval questions through `/ask` (`qwen3:8b`, M1 Pro): the 10 answerable and 2 tricky ones are
+answered, 11 of the 12 citing the expected page; borscht and Django stop at the threshold, Angular is
+declined by the model. It is slow: 8–20 s of reranking plus 8–35 s of generation, the longer the
+answer the longer the wait — hence streaming next.
+
+`CHAT_NUM_CTX` (default 8192) sets the chat model's context window explicitly: Ollama silently drops
+the start of a prompt that does not fit, and six chunks come to ~1.5–4k tokens.
 
 ## Evaluation
 

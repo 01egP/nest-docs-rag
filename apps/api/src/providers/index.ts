@@ -30,6 +30,7 @@ export function createGenerator(config: Config): Generator {
         new OllamaClient(config.OLLAMA_URL),
         config.CHAT_MODEL,
         config.CHAT_THINK,
+        config.CHAT_NUM_CTX,
       );
     default:
       throw new Error(`CHAT_PROVIDER=${config.CHAT_PROVIDER} is not implemented yet`);

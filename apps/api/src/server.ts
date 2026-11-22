@@ -1,8 +1,10 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import type { Config } from './config.js';
+import { ask, defaultMinScore } from './ask/ask.js';
 import { pgvectorVersion } from './db.js';
-import type { Embedder, Generator } from './providers/index.js';
+import { tableForConfig } from './ingest/store.js';
+import type { Embedder, Generator, Reranker } from './providers/index.js';
 import { OllamaClient, sameModel } from './providers/ollama/client.js';
 
 export interface AppDeps {
@@ -10,7 +12,12 @@ export interface AppDeps {
   pool: pg.Pool;
   embedder: Embedder;
   generator: Generator;
+  /** `null` = vector order only (RERANK_PROVIDER=none). */
+  reranker: Reranker | null;
 }
+
+/** Longer questions are not questions; it also bounds the reranker's work. */
+const MAX_QUESTION_CHARS = 1000;
 
 type Check = { ok: true; [key: string]: unknown } | { ok: false; error: string };
 
@@ -22,8 +29,16 @@ async function check(fn: () => Promise<Record<string, unknown>>): Promise<Check>
   }
 }
 
-export function buildServer({ config, pool, embedder, generator }: AppDeps): FastifyInstance {
+export function buildServer({
+  config,
+  pool,
+  embedder,
+  generator,
+  reranker,
+}: AppDeps): FastifyInstance {
   const app = Fastify({ logger: { level: config.LOG_LEVEL } });
+  const table = tableForConfig(config);
+  const minScore = config.ASK_MIN_SCORE ?? defaultMinScore(config.EMBED_MODEL, Boolean(reranker));
 
   /** Is everything the pipeline needs reachable? Not just "process is up". */
   app.get('/health', async (_req, reply) => {
@@ -52,8 +67,54 @@ export function buildServer({ config, pool, embedder, generator }: AppDeps): Fas
       models,
       embedder: { id: embedder.id, dimensions: embedder.dimensions },
       generator: { id: generator.id },
+      reranker: reranker && { id: reranker.id },
     });
   });
+
+  /** Answer from the indexed docs with citations, or "not in the docs" (see ask/ask.ts). */
+  app.post<{ Body: { question: string } }>(
+    '/ask',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['question'],
+          properties: {
+            question: {
+              type: 'string',
+              minLength: 1,
+              maxLength: MAX_QUESTION_CHARS,
+              pattern: '\\S',
+            },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      const question = req.body.question.trim();
+      try {
+        const result = await ask(
+          { pool, table, embedder, generator, reranker, minScore },
+          question,
+        );
+        req.log.info(
+          {
+            answered: result.answered,
+            reason: result.reason,
+            topScore: result.retrieval.topScore,
+            citations: result.citations.map((c) => c.n),
+            timingsMs: result.timingsMs,
+          },
+          'ask',
+        );
+        return result;
+      } catch (err) {
+        // Database, Ollama or a malformed model answer: not the client's fault, not a crash either.
+        req.log.error({ err }, 'ask failed');
+        return reply.code(502).send({ error: 'Could not answer right now; see the API log.' });
+      }
+    },
+  );
 
   return app;
 }

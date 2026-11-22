@@ -39,6 +39,13 @@ const schema = z.object({
   CHAT_MODEL: z.string().default('qwen3:8b'),
   // qwen3 is a "thinking" model; reasoning tokens are slow and not needed for grounded answers
   CHAT_THINK: bool(false),
+  // Context window for the chat model, in tokens. Ollama silently drops the start of a prompt that
+  // does not fit, and /ask sends up to six ~700-token chunks, so this is set explicitly.
+  CHAT_NUM_CTX: z.coerce.number().int().positive().default(8192),
+
+  // /ask answers "not in the docs" without calling the LLM when the best hit scores below this.
+  // Unset = the measured default for the active scorer (the reranker, or the embedding model).
+  ASK_MIN_SCORE: z.coerce.number().min(0).max(1).optional(),
 
   // Cross-encoder reranking of the search candidates: transformers.js in-process; the model
   // (~0.6 GB for int8) is downloaded on first use into data/models/

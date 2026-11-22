@@ -16,6 +16,8 @@ export class OllamaGenerator implements Generator {
     readonly model: string,
     /** Reasoning ("thinking") mode for models that support it, e.g. qwen3. */
     private readonly think = false,
+    /** Context window in tokens; Ollama's own default may be smaller than a RAG prompt. */
+    private readonly numCtx?: number,
   ) {
     this.id = `ollama:${model}`;
   }
@@ -28,7 +30,10 @@ export class OllamaGenerator implements Generator {
       think: this.think,
       // Ollama structured output: a JSON Schema constrains decoding to valid JSON.
       ...(request.jsonSchema && { format: request.jsonSchema }),
-      options: { temperature: request.temperature ?? 0 },
+      options: {
+        temperature: request.temperature ?? 0,
+        ...(this.numCtx && { num_ctx: this.numCtx }),
+      },
     });
     return {
       text: res.message.content,
