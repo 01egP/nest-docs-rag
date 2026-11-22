@@ -29,7 +29,7 @@ ollama pull bge-m3 && ollama pull qwen3:8b
 ```
 
 ```bash
-cp .env.example .env
+cp .env.example .env   # then set DB_USER and DB_PASSWORD; empty values use the defaults
 npm install
 npm run db:up        # Postgres + pgvector on localhost:5433
 npm run smoke        # embed + rank two passages, then a JSON answer from the chat model
