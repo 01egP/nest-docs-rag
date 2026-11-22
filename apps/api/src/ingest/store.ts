@@ -8,6 +8,8 @@
 import { createHash } from 'node:crypto';
 import type pg from 'pg';
 import pgvector from 'pgvector/pg';
+import type { Config } from '../config.js';
+import { getEmbeddingModel } from '../providers/embedding-models.js';
 
 export interface ChunkRecord {
   sourcePath: string;
@@ -54,6 +56,19 @@ export function tableName(model: string, opts: { noPrefix?: boolean; suffix?: st
     .replace(/[^a-z0-9]+/g, '_');
   if (name.length > 63) throw new Error(`Table name too long for Postgres: ${name}`);
   return name;
+}
+
+/** The table the configured embedder reads and writes: the same name for ingest, search and eval. */
+export function tableForConfig(
+  config: Pick<Config, 'EMBED_MODEL' | 'EMBED_USE_PREFIXES'>,
+  suffix?: string,
+): string {
+  const spec = getEmbeddingModel(config.EMBED_MODEL);
+  const hasPrefixes = Boolean(spec.queryPrefix || spec.documentPrefix);
+  return tableName(config.EMBED_MODEL, {
+    noPrefix: hasPrefixes && !config.EMBED_USE_PREFIXES,
+    suffix,
+  });
 }
 
 export async function ensureTable(pool: pg.Pool, table: string, dimensions: number): Promise<void> {

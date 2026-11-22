@@ -1,0 +1,136 @@
+{
+  "$comment": "Eval set for `npm run eval`. `expected` lists acceptable sources (URL with anchor); a page-level hit ignores the anchor. Empty `expected` means the right answer is \"not in the docs\".",
+  "questions": [
+    {
+      "id": "q01",
+      "kind": "docs",
+      "lang": "ru",
+      "question": "Как сделать модуль глобальным, чтобы не импортировать его в каждый модуль?",
+      "expected": ["https://docs.nestjs.com/modules#global-modules"]
+    },
+    {
+      "id": "q02",
+      "kind": "docs",
+      "lang": "en",
+      "question": "How do I apply a guard to every route in the application?",
+      "expected": ["https://docs.nestjs.com/guards#binding-guards"]
+    },
+    {
+      "id": "q03",
+      "kind": "docs",
+      "lang": "ru",
+      "question": "Как проверить тело запроса с помощью class-validator?",
+      "expected": [
+        "https://docs.nestjs.com/application/validation#using-the-built-in-validationpipe",
+        "https://docs.nestjs.com/application/validation#auto-validation",
+        "https://docs.nestjs.com/pipes#class-validator"
+      ]
+    },
+    {
+      "id": "q04",
+      "kind": "docs",
+      "lang": "en",
+      "question": "How can I load environment variables from a .env file and read them in a service?",
+      "expected": [
+        "https://docs.nestjs.com/application/configuration#getting-started",
+        "https://docs.nestjs.com/application/configuration#using-the-configservice"
+      ]
+    },
+    {
+      "id": "q05",
+      "kind": "docs",
+      "lang": "ru",
+      "question": "Чем провайдер со scope REQUEST отличается от обычного синглтона?",
+      "expected": [
+        "https://docs.nestjs.com/fundamentals/injection-scopes#provider-scope",
+        "https://docs.nestjs.com/fundamentals/injection-scopes#usage"
+      ]
+    },
+    {
+      "id": "q06",
+      "kind": "docs",
+      "lang": "en",
+      "question": "How do I fix a circular dependency between two providers?",
+      "expected": ["https://docs.nestjs.com/fundamentals/circular-dependency#forward-reference"]
+    },
+    {
+      "id": "q07",
+      "kind": "docs",
+      "lang": "ru",
+      "question": "Как ограничить количество запросов от одного клиента?",
+      "expected": [
+        "https://docs.nestjs.com/security/rate-limiting",
+        "https://docs.nestjs.com/security/rate-limiting#configuration"
+      ]
+    },
+    {
+      "id": "q08",
+      "kind": "docs",
+      "lang": "en",
+      "question": "In what order are middleware, guards, interceptors and pipes executed for a request?",
+      "expected": [
+        "https://docs.nestjs.com/faq/request-lifecycle#summary",
+        "https://docs.nestjs.com/faq/request-lifecycle"
+      ]
+    },
+    {
+      "id": "q09",
+      "kind": "docs",
+      "lang": "ru",
+      "question": "Как подменить провайдер моком в юнит-тесте?",
+      "expected": [
+        "https://docs.nestjs.com/fundamentals/testing#testing-utilities",
+        "https://docs.nestjs.com/fundamentals/testing#end-to-end-testing"
+      ]
+    },
+    {
+      "id": "q10",
+      "kind": "docs",
+      "lang": "en",
+      "question": "How do I version my API through the URL, like /v1/users?",
+      "expected": ["https://docs.nestjs.com/http/versioning#uri-versioning-type"]
+    },
+    {
+      "id": "q11",
+      "kind": "off-topic",
+      "lang": "ru",
+      "question": "Как приготовить борщ?",
+      "expected": []
+    },
+    {
+      "id": "q12",
+      "kind": "off-topic",
+      "lang": "en",
+      "question": "How do I write a serializer in Django REST framework?",
+      "expected": [],
+      "note": "Technical and close in vocabulary (serialization, validation) but a different framework."
+    },
+    {
+      "id": "q13",
+      "kind": "off-topic",
+      "lang": "en",
+      "question": "How do I configure lazy-loaded routes in Angular?",
+      "expected": [],
+      "note": "Adjacent ecosystem; NestJS docs have 'lazy loading modules', which is a different thing."
+    },
+    {
+      "id": "q14",
+      "kind": "tricky",
+      "lang": "en",
+      "question": "How do I protect a WebSocket gateway with JWT authentication?",
+      "expected": [
+        "https://docs.nestjs.com/websockets/guards#binding-guards",
+        "https://docs.nestjs.com/security/authentication"
+      ],
+      "note": "Spans two pages: WebSocket guards and JWT auth."
+    },
+    {
+      "id": "q15",
+      "kind": "tricky",
+      "lang": "ru",
+      "question": "Как выполнить код, когда приложение выключается?",
+      "expected": ["https://docs.nestjs.com/fundamentals/lifecycle-events#application-shutdown"],
+      "note": "Synonym test: no 'lifecycle', 'hook' or 'onModuleDestroy' in the question."
+    }
+  ]
+}

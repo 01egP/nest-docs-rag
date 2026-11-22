@@ -10,7 +10,6 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { loadConfig } from '../config.js';
 import { createPool } from '../db.js';
-import { getEmbeddingModel } from '../providers/embedding-models.js';
 import { createEmbedder } from '../providers/index.js';
 import { chunkMarkdown, DEFAULT_CHUNK_OPTIONS } from '../ingest/chunker.js';
 import { cleanMarkdown } from '../ingest/markdown.js';
@@ -19,7 +18,7 @@ import {
   embedTextFor,
   ensureTable,
   syncChunks,
-  tableName,
+  tableForConfig,
   type ChunkRecord,
 } from '../ingest/store.js';
 
@@ -75,12 +74,7 @@ if (args['dry-run']) {
 
 const config = loadConfig();
 const embedder = createEmbedder(config);
-const spec = getEmbeddingModel(config.EMBED_MODEL);
-const hasPrefixes = Boolean(spec.queryPrefix || spec.documentPrefix);
-const table = tableName(config.EMBED_MODEL, {
-  noPrefix: hasPrefixes && !config.EMBED_USE_PREFIXES,
-  suffix: args.suffix,
-});
+const table = tableForConfig(config, args.suffix);
 
 const pool = createPool(config);
 try {

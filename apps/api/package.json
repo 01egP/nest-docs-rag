@@ -9,7 +9,8 @@
     "smoke": "tsx src/scripts/smoke.ts",
     "ingest": "tsx src/scripts/ingest.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "eval": "tsx src/scripts/eval.ts"
   },
   "dependencies": {
     "fastify": "^5.12.8",

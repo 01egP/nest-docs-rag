@@ -65,4 +65,24 @@ EMBED_MODEL=nomic-embed-text npm run ingest     # a second index to compare mode
 npm run ingest -- --suffix c400 --max-tokens 400   # a separate index for a chunk-size experiment
 ```
 
+## Evaluation
+
+`npm run eval` measures retrieval on a fixed question set (`apps/api/eval/questions.json`): 10
+questions answered by the docs (Russian and English, with the expected page and section), 3 off-topic
+ones and 2 tricky ones (an answer split across two pages, a question worded with synonyms). For each
+question it embeds the query, takes the top 6 chunks and reports:
+
+- **hit@1 / hit@3 / hit@6 and MRR** — at page level (anchor ignored) and at section level;
+- **top similarity** of every question, and whether one threshold separates answerable questions
+  from off-topic ones — the input for the "not in the docs" cut-off, set per model.
+
+```bash
+npm run eval                        # the configured model's index
+npm run eval -- --suffix c400       # an experiment index built with the same --suffix
+npm run eval -- --verbose           # also print the top chunks of every question
+npm run eval -- --report            # Markdown table of all saved runs
+```
+
+Each run is saved to `reports/eval/<table>.json` (git-ignored).
+
 `npm test`, `npm run typecheck`, `npm run format:check` — the usual checks.
