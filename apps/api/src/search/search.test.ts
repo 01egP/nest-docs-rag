@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { diversify, type SearchHit } from './search.js';
+import type { Reranker } from '../providers/index.js';
+import { diversify, rerankHits, type SearchHit } from './search.js';
 
 const D = 'https://docs.nestjs.com';
 let nextId = 1;
@@ -46,5 +47,42 @@ describe('diversify', () => {
 
   it('returns the raw order with no limits', () => {
     expect(diversify(pool, 6, { maxPerSection: Infinity })).toEqual(pool);
+  });
+});
+
+describe('rerankHits', () => {
+  // Fake cross-encoder: relevance = how often the query word occurs in the text.
+  const reranker: Reranker = {
+    id: 'fake',
+    model: 'fake',
+    score: async (query, docs) => docs.map((d) => d.split(query).length - 1),
+  };
+  const h = (url: string, content: string, score: number): SearchHit => ({
+    ...hit(url, score),
+    content,
+  });
+
+  it('re-sorts by the reranker score and keeps the cosine as vectorScore', async () => {
+    const out = await rerankHits(reranker, 'throttle', [
+      h('a', 'limits', 0.7),
+      h('b', 'throttle throttle', 0.6),
+      h('c', 'throttle', 0.5),
+    ]);
+    expect(urls(out)).toEqual(['b', 'c', 'a']);
+    expect(out.map((x) => [x.score, x.vectorScore])).toEqual([
+      [2, 0.6],
+      [1, 0.5],
+      [0, 0.7],
+    ]);
+  });
+
+  it('shows the reranker the heading chain with the chunk', async () => {
+    const seen: string[] = [];
+    const spy: Reranker = {
+      ...reranker,
+      score: async (_q, d) => (seen.push(...d), d.map(() => 0)),
+    };
+    await rerankHits(spy, 'q', [{ ...h('a', 'body', 0.5), headingPath: ['Guards', 'Binding'] }]);
+    expect(seen).toEqual(['Guards > Binding\n\nbody']);
   });
 });

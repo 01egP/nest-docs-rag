@@ -30,6 +30,11 @@ const schema = z.object({
   EMBED_USE_PREFIXES: bool(true),
   CHAT_MODEL: z.string().default('qwen3:8b'),
   CHAT_THINK: bool(false),
+
+  // Cross-encoder reranking of the search candidates (transformers.js, model cached in data/models/)
+  RERANK_PROVIDER: z.enum(['none', 'transformers']).default('transformers'),
+  RERANK_MODEL: z.string().default('onnx-community/bge-reranker-v2-m3-ONNX'),
+  RERANK_DTYPE: z.enum(['fp32', 'fp16', 'int8', 'q4']).default('int8'),
 });
 
 export type Config = z.infer<typeof schema>;

@@ -5,7 +5,7 @@ documentation, with citations — or says the docs don't cover it. Runs fully lo
 embeddings and answers, Postgres + pgvector for search.
 
 > Work in progress. Done so far: repo scaffold, provider interfaces, local Ollama implementations,
-> indexing of the docs into pgvector.
+> indexing of the docs into pgvector, top-k search with cross-encoder reranking, a retrieval eval.
 
 ## Stack
 
@@ -14,10 +14,11 @@ embeddings and answers, Postgres + pgvector for search.
 - **Storage**: Postgres 17 with pgvector (Docker)
 - **Models** (Ollama): `bge-m3` embeddings by default (also `nomic-embed-text`, `mxbai-embed-large`),
   `qwen3:8b` for answers
+- **Reranker** (in-process, ONNX via `@huggingface/transformers`): `bge-reranker-v2-m3`, int8
 
 Embedding and chat providers sit behind the `Embedder` / `Generator` interfaces
 (`apps/api/src/providers/types.ts`) and are picked via env, so a paid API can replace Ollama without
-touching the pipeline.
+touching the pipeline. The reranker sits behind `Reranker` the same way.
 
 ## Getting started
 
@@ -82,6 +83,8 @@ npm run eval -- --suffix c400       # an experiment index built with the same --
 npm run eval -- --verbose           # also print the top chunks of every question
 npm run eval -- --no-dedupe         # raw nearest neighbours, for comparison
 npm run eval -- --per-page 2        # also cap chunks per page
+npm run eval -- --rerank            # re-order the candidates with the cross-encoder
+npm run eval -- --candidates 20     # size of the candidate pool (default 30)
 npm run eval -- --report            # Markdown table of all saved runs
 ```
 
@@ -89,7 +92,32 @@ The search keeps at most one chunk per section (URL with anchor): it fetches the
 and drops repeats, because a long section is split into several chunks and would otherwise take
 several of the k slots.
 
+### Reranking
+
+Vector search is a bi-encoder: the question and each chunk are embedded separately, so a chunk's
+vector is fixed before the question is known. Near-topic sections of other pages (rate limiting on
+sign-in in a tutorial vs the Rate limiting page) end up within noise of each other. A cross-encoder
+reads the question and a chunk together and scores the pair, which is far better at ordering — but
+it cannot be precomputed, so it only re-orders the 30 candidates from vector search.
+
+Ollama has no rerank endpoint, so `bge-reranker-v2-m3` (multilingual, the reranking pair of
+`bge-m3`) runs in-process with ONNX Runtime; the int8 model (~0.6 GB) is downloaded on first use
+into `data/models/`. Set `RERANK_PROVIDER=none` to turn it off.
+
+First results on `chunks_bge_m3`, 10 answerable questions:
+
+|             | hit@1 | hit@3 | hit@6 | MRR   | section hit@6 | answerable min | off-topic max | search time |
+| ----------- | ----- | ----- | ----- | ----- | ------------- | -------------- | ------------- | ----------- |
+| vector only | 60%   | 70%   | 80%   | 0.658 | 70%           | 0.611          | 0.637         | ~10 ms      |
+| + reranker  | 50%   | 90%   | 100%  | 0.692 | 100%          | 0.619          | 0.427         | ~8.5 s      |
+
+Every answerable question now has its page in the top 6, and its score separates it from the
+off-topic ones (cosine could not: the Django serializer question scored above two real ones). The
+cost is latency: about 8.5 s per question on an M1 Pro CPU (30 pairs of up to 512 tokens through a
+568M-parameter model). The two "tricky" questions (an answer split across pages) get low reranker
+scores, since no single chunk answers them.
+
 Each run is saved to `reports/eval/<table>[__<variant>].json` (git-ignored); the variant names a
-non-default diversification (`raw`, `p2`).
+non-default search setting (`raw`, `p2`, `rr`, `n20`).
 
 `npm test`, `npm run typecheck`, `npm run format:check` — the usual checks.

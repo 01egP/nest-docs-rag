@@ -1,10 +1,14 @@
 import type { Config } from '../config.js';
-import type { Embedder, Generator } from './types.js';
+import { fileURLToPath } from 'node:url';
+import type { Embedder, Generator, Reranker } from './types.js';
 import { OllamaClient } from './ollama/client.js';
 import { OllamaEmbedder } from './ollama/ollama-embedder.js';
 import { OllamaGenerator } from './ollama/ollama-generator.js';
+import { TransformersReranker } from './transformers/transformers-reranker.js';
 
-export type { Embedder, Generator } from './types.js';
+export type { Embedder, Generator, Reranker } from './types.js';
+
+const MODELS_DIR = fileURLToPath(new URL('../../../../data/models/', import.meta.url));
 
 export function createEmbedder(config: Config): Embedder {
   switch (config.EMBED_PROVIDER) {
@@ -29,5 +33,15 @@ export function createGenerator(config: Config): Generator {
       );
     default:
       throw new Error(`CHAT_PROVIDER=${config.CHAT_PROVIDER} is not implemented yet`);
+  }
+}
+
+/** `null` when reranking is off (RERANK_PROVIDER=none): search order is the vector order. */
+export function createReranker(config: Config): Reranker | null {
+  switch (config.RERANK_PROVIDER) {
+    case 'none':
+      return null;
+    case 'transformers':
+      return new TransformersReranker(config.RERANK_MODEL, config.RERANK_DTYPE, MODELS_DIR);
   }
 }

@@ -7,9 +7,14 @@
  * split into several chunks), so the raw nearest neighbours tend to fill all k slots with one
  * section. We fetch a wider candidate pool and keep at most `maxPerSection` chunks per section
  * (URL with anchor) and, optionally, `maxPerPage` per page.
+ *
+ * With a reranker, the candidates are re-scored by a cross-encoder that reads the question and each
+ * chunk together, re-sorted, and only then diversified — so `score` is the reranker's.
  */
 import type pg from 'pg';
 import pgvector from 'pgvector/pg';
+import { embedTextFor } from '../ingest/store.js';
+import type { Reranker } from '../providers/index.js';
 
 export const DEFAULT_TOP_K = 6;
 /**
@@ -23,8 +28,10 @@ export interface SearchHit {
   url: string;
   headingPath: string[];
   content: string;
-  /** Cosine similarity, 1 = same direction. */
+  /** Cosine similarity (1 = same direction), or the reranker's relevance in [0, 1] if reranked. */
   score: number;
+  /** Cosine similarity, kept when `score` was replaced by a reranker. */
+  vectorScore?: number;
 }
 
 export interface DiversifyOptions {
@@ -38,6 +45,24 @@ export interface SearchOptions extends DiversifyOptions {
   k?: number;
   /** Size of the nearest-neighbour pool to diversify from; ignored when it is below k. */
   candidates?: number;
+  /** Re-order the candidates with a cross-encoder; needs the question text. */
+  rerank?: { reranker: Reranker; query: string };
+}
+
+/** Re-score hits with a cross-encoder and sort by its score; the cosine moves to `vectorScore`. */
+export async function rerankHits(
+  reranker: Reranker,
+  query: string,
+  hits: SearchHit[],
+): Promise<SearchHit[]> {
+  // The reranker sees the same text the embedding was made from: heading chain + chunk.
+  const scores = await reranker.score(
+    query,
+    hits.map((h) => embedTextFor(h.headingPath, h.content)),
+  );
+  return hits
+    .map((h, i) => ({ ...h, vectorScore: h.score, score: scores[i]! }))
+    .sort((a, b) => b.score - a.score);
 }
 
 const pageOf = (url: string) => url.split('#', 1)[0]!;
@@ -71,7 +96,7 @@ export async function searchChunks(
   pool: pg.Pool,
   table: string,
   queryVector: number[],
-  { k = DEFAULT_TOP_K, candidates = DEFAULT_CANDIDATES, ...limits }: SearchOptions = {},
+  { k = DEFAULT_TOP_K, candidates = DEFAULT_CANDIDATES, rerank, ...limits }: SearchOptions = {},
 ): Promise<SearchHit[]> {
   // ORDER BY the distance operator itself so the HNSW index is used; similarity = 1 - distance.
   const { rows } = await pool.query<{
@@ -94,5 +119,6 @@ export async function searchChunks(
     content: r.content,
     score: 1 - r.distance,
   }));
-  return diversify(hits, k, limits);
+  const ordered = rerank ? await rerankHits(rerank.reranker, rerank.query, hits) : hits;
+  return diversify(ordered, k, limits);
 }

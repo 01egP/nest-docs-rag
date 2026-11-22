@@ -43,3 +43,16 @@ export interface Generator {
   readonly model: string;
   generate(request: GenerateRequest): Promise<GenerateResult>;
 }
+
+/**
+ * Second-stage scorer: reads the query and each candidate together (a cross-encoder) and returns
+ * how well the candidate answers the query. Slower than vector search, so it only re-orders the
+ * few dozen candidates that search already found.
+ */
+export interface Reranker {
+  /** Stable identifier, e.g. "transformers:onnx-community/bge-reranker-v2-m3-ONNX". */
+  readonly id: string;
+  readonly model: string;
+  /** One relevance score in [0, 1] per document, in input order. */
+  score(query: string, documents: string[]): Promise<number[]>;
+}
