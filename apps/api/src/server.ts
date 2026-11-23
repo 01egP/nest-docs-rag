@@ -51,11 +51,14 @@ export function buildServer({
         return { pgvector: version };
       }),
       check(async () => {
-        if (config.EMBED_PROVIDER !== 'ollama' && config.CHAT_PROVIDER !== 'ollama') return {};
+        // Only the models served by Ollama; an API-backed generator is checked by its first call.
+        const local = [
+          ...(config.EMBED_PROVIDER === 'ollama' ? [embedder.model] : []),
+          ...(config.CHAT_PROVIDER === 'ollama' ? [generator.model] : []),
+        ];
+        if (!local.length) return {};
         const pulled = await ollama.listModels();
-        const missing = [embedder.model, generator.model].filter(
-          (m) => !pulled.some((p) => sameModel(p, m)),
-        );
+        const missing = local.filter((m) => !pulled.some((p) => sameModel(p, m)));
         if (missing.length) throw new Error(`not pulled in Ollama: ${missing.join(', ')}`);
         return {};
       }),

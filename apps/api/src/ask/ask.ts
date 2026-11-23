@@ -53,6 +53,8 @@ export const ANSWER_SCHEMA = {
     citations: { type: 'array', items: { type: 'integer' } },
   },
   required: ['answerable', 'answer', 'citations'],
+  // Strict structured output on OpenAI-compatible APIs requires it; Ollama accepts it too.
+  additionalProperties: false,
 } as const;
 
 const SYSTEM_PROMPT = `You answer questions about the NestJS framework using ONLY the numbered sources from its official documentation.

@@ -4,6 +4,7 @@ import type { Embedder, Generator, Reranker } from './types.js';
 import { OllamaClient } from './ollama/client.js';
 import { OllamaEmbedder } from './ollama/ollama-embedder.js';
 import { OllamaGenerator } from './ollama/ollama-generator.js';
+import { OpenAICompatibleGenerator } from './openai/openai-generator.js';
 import { TransformersReranker } from './transformers/transformers-reranker.js';
 
 export type { Embedder, Generator, Reranker } from './types.js';
@@ -32,6 +33,12 @@ export function createGenerator(config: Config): Generator {
         config.CHAT_THINK,
         config.CHAT_NUM_CTX,
       );
+    case 'openai':
+      return new OpenAICompatibleGenerator({
+        baseUrl: config.OPENAI_BASE_URL,
+        apiKey: config.OPENAI_API_KEY!, // checked by loadConfig
+        model: config.CHAT_MODEL,
+      });
     default:
       throw new Error(`CHAT_PROVIDER=${config.CHAT_PROVIDER} is not implemented yet`);
   }

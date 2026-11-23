@@ -45,6 +45,7 @@ const result = await generator.generate({
       citations: { type: 'array', items: { type: 'integer' } },
     },
     required: ['answer', 'citations'],
+    additionalProperties: false,
   },
 });
 console.log(`\n${generator.id} — ${Math.round(performance.now() - t)} ms`, result.usage);

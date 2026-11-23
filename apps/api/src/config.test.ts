@@ -15,4 +15,14 @@ describe('loadConfig', () => {
     expect(() => loadConfig({})).toThrow(/DB_USER[\s\S]*DB_PASSWORD/);
     expect(() => loadConfig({ DB_USER: 'u', DB_PASSWORD: '' })).toThrow(/DB_PASSWORD/);
   });
+
+  it('requires an API key only when the chat goes to an OpenAI-compatible API', () => {
+    expect(loadConfig(creds).OPENAI_API_KEY).toBeUndefined();
+    expect(() => loadConfig({ ...creds, CHAT_PROVIDER: 'openai' })).toThrow(/OPENAI_API_KEY/);
+    expect(() => loadConfig({ ...creds, CHAT_PROVIDER: 'openai', OPENAI_API_KEY: '' })).toThrow(
+      /OPENAI_API_KEY/,
+    );
+    const c = loadConfig({ ...creds, CHAT_PROVIDER: 'openai', OPENAI_API_KEY: 'k' });
+    expect(c.OPENAI_BASE_URL).toBe('https://api.openai.com/v1');
+  });
 });

@@ -2,7 +2,8 @@
 
 Ask the NestJS docs: a personal tool that answers questions about NestJS strictly from the official
 documentation, with citations — or says the docs don't cover it. Runs fully locally: Ollama for
-embeddings and answers, Postgres + pgvector for search.
+embeddings and answers, Postgres + pgvector for search. Answers can also come from a hosted model
+through any OpenAI-compatible API, while search stays local.
 
 > Work in progress. Done so far: repo scaffold, provider interfaces, local Ollama implementations,
 > indexing of the docs into pgvector, top-k search with cross-encoder reranking, a retrieval eval,
@@ -15,6 +16,8 @@ embeddings and answers, Postgres + pgvector for search.
 - **Storage**: Postgres 17 with pgvector (Docker)
 - **Models** (Ollama): `bge-m3` embeddings by default (also `nomic-embed-text`, `mxbai-embed-large`),
   `qwen3:8b` for answers
+- **Hosted answers** (optional): any OpenAI-compatible Chat Completions API — measured with
+  `claude-haiku-5-5` through Abacus RouteLLM
 - **Reranker** (in-process, ONNX via `@huggingface/transformers`): `bge-reranker-v2-m3`, int8
 
 Embedding and chat providers sit behind the `Embedder` / `Generator` interfaces
@@ -164,8 +167,35 @@ same total as before, but with something on screen. The gap between sources and 
 prompt processing: Ollama reads ~230 tokens/s, and six chunks are ~1.5–3k tokens. Streaming can't
 hide that; fewer or shorter chunks in the prompt can.
 
-`CHAT_NUM_CTX` (default 8192) sets the chat model's context window explicitly: Ollama silently drops
+`CHAT_NUM_CTX` (default 8192, Ollama only) sets the chat model's context window explicitly: Ollama silently drops
 the start of a prompt that does not fit, and six chunks come to ~1.5–4k tokens.
+
+### Hosted model
+
+The answer step can go to any OpenAI-compatible Chat Completions API instead of Ollama; embeddings,
+search and reranking stay local, so the index is the same:
+
+```bash
+CHAT_PROVIDER=openai
+OPENAI_BASE_URL=https://routellm.abacus.ai/v1   # default: https://api.openai.com/v1
+OPENAI_API_KEY=…                                # .env only
+CHAT_MODEL=claude-haiku-5-5                     # the API's model name
+```
+
+The prompt and the answer schema are the same; the schema goes out as strict structured output
+(`response_format: json_schema`), and streaming uses the API's server-sent events
+(`apps/api/src/providers/openai/`).
+
+All 15 eval questions through `/ask`, same index and reranker:
+
+|                              | correct | expected page cited | generation | total   | tokens in / out (15 q) |
+| ---------------------------- | ------- | ------------------- | ---------- | ------- | ---------------------- |
+| `qwen3:8b`, Ollama, M1 Pro   | 15 / 15 | 11 / 12             | 8–35 s     | 17–45 s | —                      |
+| `claude-haiku-5-5`, RouteLLM | 15 / 15 | 12 / 12             | 1–6.5 s    | 10–16 s | 58.6k / 6.4k (~$0.01)  |
+
+With a hosted model the answer is no longer the slow part: reranking is (~8 s of the ~12 s). Streaming
+helps less too — with structured output the first piece arrives ~3 s after the request, and the rest
+within a second or two.
 
 ## Evaluation
 
