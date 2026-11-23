@@ -4,6 +4,7 @@
  *   npm run ingest -- --dry-run       chunk only: stats and samples, no embedding, no database
  *   npm run ingest -- --offline       use the existing clone as is
  *   npm run ingest -- --suffix c400 --max-tokens 400   a separate index for an experiment
+ *   EMBED_HEADINGS=false npm run ingest                chunks without the heading chain ("_noheadings")
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -38,6 +39,7 @@ const options = {
   ...(args['overlap-tokens'] && { overlapTokens: Number(args['overlap-tokens']) }),
 };
 
+const config = loadConfig();
 const started = performance.now();
 const commit = await syncSource(DEFAULT_SOURCE_DIR, { offline: args.offline });
 const { pages, missing } = listPages(DEFAULT_SOURCE_DIR);
@@ -53,14 +55,15 @@ const records: ChunkRecord[] = pages.flatMap((page) => {
     position,
     content: chunk.content,
     tokens: chunk.tokens,
-    embedText: embedTextFor(chunk.headingPath, chunk.content),
+    embedText: embedTextFor(chunk.headingPath, chunk.content, config.EMBED_HEADINGS),
   }));
 });
 
 const sizes = records.map((r) => r.tokens).sort((a, b) => a - b);
 const pct = (p: number) => sizes[Math.min(sizes.length - 1, Math.floor((p / 100) * sizes.length))];
 console.log(
-  `${records.length} chunks (max ${options.maxTokens}, overlap ${options.overlapTokens} est. tokens); ` +
+  `${records.length} chunks (max ${options.maxTokens}, overlap ${options.overlapTokens} est. tokens` +
+    `${config.EMBED_HEADINGS ? '' : ', no heading chain'}); ` +
     `size p5/p50/p95/max: ${pct(5)}/${pct(50)}/${pct(95)}/${sizes.at(-1)}`,
 );
 
@@ -72,7 +75,6 @@ if (args['dry-run']) {
   process.exit(0);
 }
 
-const config = loadConfig();
 const embedder = createEmbedder(config);
 const table = tableForConfig(config, args.suffix);
 

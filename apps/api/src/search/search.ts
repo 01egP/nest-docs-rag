@@ -45,8 +45,11 @@ export interface SearchOptions extends DiversifyOptions {
   k?: number;
   /** Size of the nearest-neighbour pool to diversify from; ignored when it is below k. */
   candidates?: number;
-  /** Re-order the candidates with a cross-encoder; needs the question text. */
-  rerank?: { reranker: Reranker; query: string };
+  /**
+   * Re-order the candidates with a cross-encoder; needs the question text. `withHeadings` must match
+   * how the index was embedded (EMBED_HEADINGS), so the reranker reads the same text.
+   */
+  rerank?: { reranker: Reranker; query: string; withHeadings?: boolean };
 }
 
 /** Re-score hits with a cross-encoder and sort by its score; the cosine moves to `vectorScore`. */
@@ -54,11 +57,12 @@ export async function rerankHits(
   reranker: Reranker,
   query: string,
   hits: SearchHit[],
+  withHeadings = true,
 ): Promise<SearchHit[]> {
-  // The reranker sees the same text the embedding was made from: heading chain + chunk.
+  // The reranker sees the same text the embedding was made from: heading chain (if any) + chunk.
   const scores = await reranker.score(
     query,
-    hits.map((h) => embedTextFor(h.headingPath, h.content)),
+    hits.map((h) => embedTextFor(h.headingPath, h.content, withHeadings)),
   );
   return hits
     .map((h, i) => ({ ...h, vectorScore: h.score, score: scores[i]! }))
@@ -119,6 +123,8 @@ export async function searchChunks(
     content: r.content,
     score: 1 - r.distance,
   }));
-  const ordered = rerank ? await rerankHits(rerank.reranker, rerank.query, hits) : hits;
+  const ordered = rerank
+    ? await rerankHits(rerank.reranker, rerank.query, hits, rerank.withHeadings)
+    : hits;
   return diversify(ordered, k, limits);
 }

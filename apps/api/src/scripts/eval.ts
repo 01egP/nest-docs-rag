@@ -1,6 +1,7 @@
 /**
  * Retrieval eval: embed each question of `eval/questions.json`, search the index, score hit@k.
- * Uses the same table as ingest for the configured model (EMBED_MODEL, EMBED_USE_PREFIXES, --suffix).
+ * Uses the same table as ingest for the configured model (EMBED_MODEL, EMBED_USE_PREFIXES,
+ * EMBED_HEADINGS, --suffix).
  *   npm run eval                        current model, default index
  *   npm run eval -- --suffix c400       an experiment index built with the same --suffix
  *   npm run eval -- --verbose           also print the top chunks of every question
@@ -109,7 +110,9 @@ try {
       k,
       ...(args.candidates && { candidates: Number(args.candidates) }),
       ...limits,
-      ...(reranker && { rerank: { reranker, query: q.question } }),
+      ...(reranker && {
+        rerank: { reranker, query: q.question, withHeadings: config.EMBED_HEADINGS },
+      }),
     });
     searchMs += performance.now() - started;
     const urls = hits.map((h) => h.url);

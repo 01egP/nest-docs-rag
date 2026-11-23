@@ -68,6 +68,7 @@ npm run ingest -- --dry-run                     # chunk stats and samples, no em
 npm run ingest -- --offline                     # skip the git fetch
 EMBED_MODEL=nomic-embed-text npm run ingest     # a second index to compare models
 npm run ingest -- --suffix c400 --max-tokens 400   # a separate index for a chunk-size experiment
+EMBED_HEADINGS=false npm run ingest                # chunks embedded without the heading chain
 ```
 
 ## Asking
@@ -269,7 +270,39 @@ cost is latency: about 8.5 s per question on an M1 Pro CPU (30 pairs of up to 51
 568M-parameter model). The two "tricky" questions (an answer split across pages) get low reranker
 scores, since no single chunk answers them.
 
+### Comparing indexes
+
+One factor at a time from the default index (`bge-m3`, chunks of up to 700 tokens, heading chain
+prepended); all new indexes built from the same docs commit. Page level, 10 answerable questions:
+
+| Index                                     | hit@1 | hit@3 | hit@6 | MRR   | section hit@3 | tricky hit@6 |
+| ----------------------------------------- | ----- | ----- | ----- | ----- | ------------- | ------------ |
+| `bge-m3` 700 (default)                    | 60%   | 70%   | 80%   | 0.658 | 40%           | 100%         |
+| `bge-m3` 400                              | 50%   | 80%   | 90%   | 0.637 | 70%           | 100%         |
+| `bge-m3` 700, no heading chain            | 70%   | 70%   | 80%   | 0.725 | 60%           | 100%         |
+| `nomic-embed-text` 400                    | 50%   | 60%   | 60%   | 0.533 | 50%           | 50%          |
+| `nomic-embed-text` 400, no prefixes       | 60%   | 60%   | 70%   | 0.620 | 50%           | 50%          |
+| `mxbai-embed-large` 400                   | 60%   | 70%   | 70%   | 0.633 | 50%           | 50%          |
+| `bge-m3` 700 + reranker                   | 50%   | 90%   | 100%  | 0.692 | 90%           | 100%         |
+| `bge-m3` 400 + reranker                   | 60%   | 90%   | 100%  | 0.750 | 90%           | 100%         |
+| `bge-m3` 700, no heading chain + reranker | 70%   | 80%   | 90%   | 0.758 | 80%           | 50%          |
+
+(`mxbai-embed-large` has a 512-token context, so the model comparison uses 400-token chunks.)
+
+- **Model:** `nomic-embed-text` and `mxbai-embed-large` are English-only and miss most Russian
+  questions; on English ones they match `bge-m3`. Being multilingual matters more than the model.
+- **Chunk size:** 400 widens recall (hit@6 90%) but puts the right page first less often; with the
+  reranker on top it is the best setup overall.
+- **Heading chain:** without it, vector search alone ranks better, but the reranker loses two
+  questions — it needs the "which page is this from" context.
+- **Prefixes** (`nomic-embed-text`): a difference of one or two questions — noise at this set size.
+
+The app stays on the default index for now: 15 questions are too few to tell a 0.05 MRR gap from
+noise, so switching waits for a larger question set. `EMBED_HEADINGS=false` builds and searches an
+index without the heading chain (table `…_noheadings`; the reranker reads the same text).
+
 Each run is saved to `reports/eval/<table>[__<variant>].json` (git-ignored); the variant names a
-non-default search setting (`raw`, `p2`, `rr`, `n20`).
+non-default search setting (`raw`, `p2`, `rr`, `n20`). `npm run eval -- --report` prints all saved
+runs as one Markdown table.
 
 `npm test`, `npm run typecheck`, `npm run format:check` — the usual checks.

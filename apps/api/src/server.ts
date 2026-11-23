@@ -75,7 +75,15 @@ export function buildServer({
     });
   });
 
-  const askDeps = { pool, table, embedder, generator, reranker, minScore };
+  const askDeps = {
+    pool,
+    table,
+    embedder,
+    generator,
+    reranker,
+    minScore,
+    withHeadings: config.EMBED_HEADINGS,
+  };
   const askBody = {
     body: {
       type: 'object',

@@ -29,9 +29,12 @@ export interface SyncStats {
   deleted: number;
 }
 
-/** Headings go into the vector too: a chunk of a "Guards" page is about guards even if it never says so. */
-export function embedTextFor(headingPath: string[], content: string): string {
-  return headingPath.length ? `${headingPath.join(' > ')}\n\n${content}` : content;
+/**
+ * Headings go into the vector too: a chunk of a "Guards" page is about guards even if it never says
+ * so. `withHeadings: false` (EMBED_HEADINGS=false) embeds the chunk text alone, to measure that.
+ */
+export function embedTextFor(headingPath: string[], content: string, withHeadings = true): string {
+  return withHeadings && headingPath.length ? `${headingPath.join(' > ')}\n\n${content}` : content;
 }
 
 export function contentHash(record: Pick<ChunkRecord, 'url' | 'embedText'>): string {
@@ -40,13 +43,18 @@ export function contentHash(record: Pick<ChunkRecord, 'url' | 'embedText'>): str
 
 /**
  * "chunks_bge_m3". Prefixes change the vectors of models that use them, so an index built without
- * them gets its own table ("_noprefix"); `suffix` names other experiments (e.g. a chunk size).
+ * them gets its own table ("_noprefix"); the same for one embedded without the heading chain
+ * ("_noheadings"); `suffix` names other experiments (e.g. a chunk size).
  */
-export function tableName(model: string, opts: { noPrefix?: boolean; suffix?: string } = {}) {
+export function tableName(
+  model: string,
+  opts: { noPrefix?: boolean; noHeadings?: boolean; suffix?: string } = {},
+) {
   const parts = [
     'chunks',
     model.replace(/:latest$/, ''),
     opts.noPrefix ? 'noprefix' : '',
+    opts.noHeadings ? 'noheadings' : '',
     opts.suffix ?? '',
   ];
   const name = parts
@@ -60,13 +68,14 @@ export function tableName(model: string, opts: { noPrefix?: boolean; suffix?: st
 
 /** The table the configured embedder reads and writes: the same name for ingest, search and eval. */
 export function tableForConfig(
-  config: Pick<Config, 'EMBED_MODEL' | 'EMBED_USE_PREFIXES'>,
+  config: Pick<Config, 'EMBED_MODEL' | 'EMBED_USE_PREFIXES' | 'EMBED_HEADINGS'>,
   suffix?: string,
 ): string {
   const spec = getEmbeddingModel(config.EMBED_MODEL);
   const hasPrefixes = Boolean(spec.queryPrefix || spec.documentPrefix);
   return tableName(config.EMBED_MODEL, {
     noPrefix: hasPrefixes && !config.EMBED_USE_PREFIXES,
+    noHeadings: !config.EMBED_HEADINGS,
     suffix,
   });
 }

@@ -38,6 +38,9 @@ const schema = z
     EMBED_MODEL: z.string().default('bge-m3'),
     // Apply the model's query/document prefixes (nomic, mxbai); turn off to measure their effect
     EMBED_USE_PREFIXES: bool(true),
+    // Prepend the heading chain ("Guards > Binding guards") to each chunk before embedding and
+    // reranking; turn off to measure its effect. Same table rule as prefixes: off = "_noheadings".
+    EMBED_HEADINGS: bool(true),
     CHAT_MODEL: z.string().default('qwen3:8b'),
     // qwen3 is a "thinking" model; reasoning tokens are slow and not needed for grounded answers
     CHAT_THINK: bool(false),

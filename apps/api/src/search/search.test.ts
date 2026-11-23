@@ -84,5 +84,14 @@ describe('rerankHits', () => {
     };
     await rerankHits(spy, 'q', [{ ...h('a', 'body', 0.5), headingPath: ['Guards', 'Binding'] }]);
     expect(seen).toEqual(['Guards > Binding\n\nbody']);
+
+    seen.length = 0;
+    await rerankHits(
+      spy,
+      'q',
+      [{ ...h('a', 'body', 0.5), headingPath: ['Guards', 'Binding'] }],
+      false,
+    );
+    expect(seen).toEqual(['body']);
   });
 });

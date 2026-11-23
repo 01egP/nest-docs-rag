@@ -9,6 +9,7 @@ describe('loadConfig', () => {
     expect(c.DB_PORT).toBe(5433);
     expect(c.EMBED_MODEL).toBe('bge-m3');
     expect(c.CHAT_THINK).toBe(false);
+    expect(c.EMBED_HEADINGS).toBe(true);
   });
 
   it('requires the database credentials', () => {

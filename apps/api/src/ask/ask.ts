@@ -150,6 +150,8 @@ export interface AskDeps {
   reranker: Reranker | null;
   minScore: number;
   k?: number;
+  /** How the table was embedded (EMBED_HEADINGS); the reranker reads the same text. Default true. */
+  withHeadings?: boolean;
 }
 
 const NOT_IN_DOCS = {
@@ -194,7 +196,9 @@ export async function* askStream(
   const [vector] = await deps.embedder.embed([question], 'query');
   const hits = await searchChunks(deps.pool as pg.Pool, deps.table, vector!, {
     k: deps.k ?? DEFAULT_TOP_K,
-    ...(deps.reranker && { rerank: { reranker: deps.reranker, query: question } }),
+    ...(deps.reranker && {
+      rerank: { reranker: deps.reranker, query: question, withHeadings: deps.withHeadings },
+    }),
   });
   const search = since(started);
 
