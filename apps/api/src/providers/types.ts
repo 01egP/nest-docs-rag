@@ -29,6 +29,8 @@ export interface GenerateRequest {
   /** JSON Schema the answer must follow (structured output). Plain text if omitted. */
   jsonSchema?: Record<string, unknown>;
   temperature?: number;
+  /** Aborts the request, e.g. when the HTTP client of /ask/stream disconnects. */
+  signal?: AbortSignal;
 }
 
 export interface GenerateResult {
@@ -42,7 +44,15 @@ export interface Generator {
   readonly id: string;
   readonly model: string;
   generate(request: GenerateRequest): Promise<GenerateResult>;
+  /**
+   * The same answer as `generate`, piece by piece: `delta` events with raw model text as it is
+   * produced, then one `done` with the whole result. Optional — callers fall back to `generate`.
+   */
+  stream?(request: GenerateRequest): AsyncIterable<GenerateChunk>;
 }
+
+export type GenerateChunk =
+  { type: 'delta'; text: string } | { type: 'done'; result: GenerateResult };
 
 /**
  * Second-stage scorer: reads the query and each candidate together (a cross-encoder) and returns

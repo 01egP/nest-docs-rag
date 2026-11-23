@@ -9,11 +9,22 @@
  *    neighbouring framework (Angular, Django) share vocabulary with the docs and pass the threshold.
  * 4. The server keeps only citation numbers that point at a chunk it actually sent and attaches that
  *    chunk's URL and text itself, so the model can't invent a source.
+ *
+ * `askStream` runs these steps as events (sources first, then the answer text as it is generated);
+ * `ask` is the same pipeline returning only the final result.
  */
 import type pg from 'pg';
 import { getEmbeddingModel } from '../providers/embedding-models.js';
-import type { ChatMessage, Embedder, Generator, Reranker } from '../providers/types.js';
+import type {
+  ChatMessage,
+  Embedder,
+  GenerateRequest,
+  GenerateResult,
+  Generator,
+  Reranker,
+} from '../providers/types.js';
 import { DEFAULT_TOP_K, searchChunks, type SearchHit } from '../search/search.js';
+import { AnswerDeltas } from './partial-answer.js';
 
 /**
  * Default thresholds, from `npm run eval` on the 15 questions (2026-11-22).
@@ -149,7 +160,34 @@ export const notInDocsMessage = (question: string) =>
 
 const since = (t: number) => Math.round(performance.now() - t);
 
-export async function ask(deps: AskDeps, question: string): Promise<AskResult> {
+/**
+ * What `/ask/stream` sends, in order: `retrieval` once search is done (sources can be shown while the
+ * model writes), `delta` pieces of the answer text, then `done` with the same object `POST /ask`
+ * returns. `done.result.answer` is authoritative: the deltas are the raw text, before citation
+ * numbers that point at no source are dropped, so a client replaces the streamed text with it.
+ * A refusal sends no deltas.
+ */
+export type AskEvent =
+  | { type: 'retrieval'; retrieval: AskResult['retrieval']; timingsMs: { search: number } }
+  | { type: 'delta'; text: string }
+  | { type: 'done'; result: AskResult };
+
+/** Model text as deltas plus the final result; a generator without `stream` sends it in one piece. */
+async function* generateChunks(generator: Generator, request: GenerateRequest) {
+  if (generator.stream) {
+    yield* generator.stream(request);
+    return;
+  }
+  const result = await generator.generate(request);
+  yield { type: 'delta', text: result.text } as const;
+  yield { type: 'done', result } as const;
+}
+
+export async function* askStream(
+  deps: AskDeps,
+  question: string,
+  signal?: AbortSignal,
+): AsyncGenerator<AskEvent> {
   const started = performance.now();
   const [vector] = await deps.embedder.embed([question], 'query');
   const hits = await searchChunks(deps.pool as pg.Pool, deps.table, vector!, {
@@ -166,41 +204,78 @@ export async function ask(deps: AskDeps, question: string): Promise<AskResult> {
     minScore: deps.minScore,
     sources: hits.map((h, i) => ({ n: i + 1, url: h.url, title: titleOf(h), score: h.score })),
   };
-  const refuse = (reason: NotAnsweredReason, extra: Partial<AskResult> = {}): AskResult => ({
-    answered: false,
-    answer: notInDocsMessage(question),
-    reason,
-    citations: [],
-    retrieval,
-    timingsMs: { search, total: since(started) },
-    ...extra,
+  yield { type: 'retrieval', retrieval, timingsMs: { search } };
+
+  const refuse = (reason: NotAnsweredReason, extra: Partial<AskResult> = {}): AskEvent => ({
+    type: 'done',
+    result: {
+      answered: false,
+      answer: notInDocsMessage(question),
+      reason,
+      citations: [],
+      retrieval,
+      timingsMs: { search, total: since(started) },
+      ...extra,
+    },
   });
 
-  if (!hits.length || topScore < deps.minScore) return refuse('below_threshold');
+  if (!hits.length || topScore < deps.minScore) {
+    yield refuse('below_threshold');
+    return;
+  }
 
   const genStarted = performance.now();
-  const result = await deps.generator.generate({
+  const deltas = new AnswerDeltas();
+  let result: GenerateResult | undefined;
+  for await (const chunk of generateChunks(deps.generator, {
     messages: buildPrompt(question, hits),
     jsonSchema: ANSWER_SCHEMA,
-  });
+    signal,
+  })) {
+    if (chunk.type === 'done') {
+      result = chunk.result;
+      break;
+    }
+    const text = deltas.push(chunk.text);
+    if (text) yield { type: 'delta', text };
+  }
+  if (!result) throw new Error('Generator finished without a result');
+
   const generate = since(genStarted);
   const parsed = parseAnswer(result.text, hits.length);
   const generator = { id: deps.generator.id, ...result.usage };
   const timingsMs = { search, generate, total: since(started) };
 
-  if (!parsed.answerable) return refuse('model_declined', { generator, timingsMs });
+  if (!parsed.answerable) {
+    yield refuse('model_declined', { generator, timingsMs });
+    return;
+  }
   // An answer that points at none of the sources is not grounded, whatever it says.
-  if (!parsed.citations.length) return refuse('no_citations', { generator, timingsMs });
+  if (!parsed.citations.length) {
+    yield refuse('no_citations', { generator, timingsMs });
+    return;
+  }
 
-  return {
-    answered: true,
-    answer: parsed.answer,
-    citations: parsed.citations.map((n) => {
-      const h = hits[n - 1]!;
-      return { n, url: h.url, title: titleOf(h), content: h.content, score: h.score };
-    }),
-    retrieval,
-    generator,
-    timingsMs,
+  yield {
+    type: 'done',
+    result: {
+      answered: true,
+      answer: parsed.answer,
+      citations: parsed.citations.map((n) => {
+        const h = hits[n - 1]!;
+        return { n, url: h.url, title: titleOf(h), content: h.content, score: h.score };
+      }),
+      retrieval,
+      generator,
+      timingsMs,
+    },
   };
+}
+
+/** The whole answer at once (`POST /ask`, eval): the same pipeline as the stream, drained. */
+export async function ask(deps: AskDeps, question: string): Promise<AskResult> {
+  for await (const event of askStream(deps, question)) {
+    if (event.type === 'done') return event.result;
+  }
+  throw new Error('ask finished without a result');
 }

@@ -1,9 +1,12 @@
-import type { GenerateRequest, GenerateResult, Generator } from '../types.js';
+import type { GenerateChunk, GenerateRequest, GenerateResult, Generator } from '../types.js';
 import type { OllamaClient } from './client.js';
 
 interface ChatResponse {
   model: string;
   message: { role: string; content: string };
+  done?: boolean;
+  /** Error reported mid-stream; the HTTP status is already 200 by then. */
+  error?: string;
   prompt_eval_count?: number;
   eval_count?: number;
 }
@@ -23,20 +26,54 @@ export class OllamaGenerator implements Generator {
   }
 
   async generate(request: GenerateRequest): Promise<GenerateResult> {
-    const res = await this.client.post<ChatResponse>('/api/chat', {
+    const res = await this.client.post<ChatResponse>(
+      '/api/chat',
+      this.body(request, false),
+      request.signal,
+    );
+    return this.result(res, res.message.content);
+  }
+
+  async *stream(request: GenerateRequest): AsyncIterable<GenerateChunk> {
+    let text = '';
+    for await (const part of this.client.postStream<ChatResponse>(
+      '/api/chat',
+      this.body(request, true),
+      request.signal,
+    )) {
+      if (part.error) throw new Error(`Ollama /api/chat: ${part.error}`);
+      const delta = part.message?.content ?? '';
+      if (delta) {
+        text += delta;
+        yield { type: 'delta', text: delta };
+      }
+      // The last line carries the token counts; its message content is empty.
+      if (part.done) {
+        yield { type: 'done', result: this.result(part, text) };
+        return;
+      }
+    }
+    throw new Error('Ollama /api/chat: stream ended without "done"');
+  }
+
+  private body(request: GenerateRequest, stream: boolean) {
+    return {
       model: this.model,
       messages: request.messages,
-      stream: false,
+      stream,
       think: this.think,
-      // Ollama structured output: a JSON Schema constrains decoding to valid JSON.
+      // Ollama structured output: a JSON Schema constrains decoding to valid JSON, streamed or not.
       ...(request.jsonSchema && { format: request.jsonSchema }),
       options: {
         temperature: request.temperature ?? 0,
         ...(this.numCtx && { num_ctx: this.numCtx }),
       },
-    });
+    };
+  }
+
+  private result(res: ChatResponse, text: string): GenerateResult {
     return {
-      text: res.message.content,
+      text,
       model: res.model,
       usage: { inputTokens: res.prompt_eval_count, outputTokens: res.eval_count },
     };

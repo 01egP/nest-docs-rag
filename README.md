@@ -6,7 +6,7 @@ embeddings and answers, Postgres + pgvector for search.
 
 > Work in progress. Done so far: repo scaffold, provider interfaces, local Ollama implementations,
 > indexing of the docs into pgvector, top-k search with cross-encoder reranking, a retrieval eval,
-> `POST /ask` with citations. Next: streaming and the web page.
+> `POST /ask` with citations, streamed as server-sent events. Next: the web page.
 
 ## Stack
 
@@ -35,7 +35,7 @@ npm install
 npm run db:up        # Postgres + pgvector on localhost:5433
 npm run smoke        # embed + rank two passages, then a JSON answer from the chat model
 npm run ingest       # clone the NestJS docs, chunk, embed into pgvector (a few minutes the first time)
-npm run dev:api      # http://127.0.0.1:3000/health, POST /ask
+npm run dev:api      # http://127.0.0.1:3000/health, POST /ask, POST /ask/stream
 npm run dev:web      # http://localhost:5173
 ```
 
@@ -120,7 +120,49 @@ written in the language of the question too, while the docs are English.
 All 15 eval questions through `/ask` (`qwen3:8b`, M1 Pro): the 10 answerable and 2 tricky ones are
 answered, 11 of the 12 citing the expected page; borscht and Django stop at the threshold, Angular is
 declined by the model. It is slow: 8–20 s of reranking plus 8–35 s of generation, the longer the
-answer the longer the wait — hence streaming next.
+answer the longer the wait — hence streaming.
+
+### Streaming
+
+`POST /ask/stream` takes the same body and answers with server-sent events, so a page can show
+something before the whole answer is ready:
+
+```bash
+curl -sN http://127.0.0.1:3000/ask/stream -H 'content-type: application/json' \
+  -d '{"question": "How do I validate a request body with pipes?"}'
+```
+
+```text
+: searching
+
+event: retrieval
+data: {"retrieval":{"table":"chunks_bge_m3","reranked":true,"topScore":0.98,…,"sources":[…]},"timingsMs":{"search":13470}}
+
+event: delta
+data: {"text":"To validate"}
+
+… more deltas …
+
+event: done
+data: {"answered":true,"answer":"…","citations":[…],…}
+```
+
+- `retrieval` — right after search, before the model starts: the sources can be listed already.
+- `delta` — pieces of the answer text. The model still answers through the same structured output
+  (JSON), so the prompt and the eval results stay as measured; the server reads `answerable` and the
+  growing `answer` string out of the unfinished JSON (`ask/partial-answer.ts`). Nothing is sent while
+  `answerable` is unknown or false, so a refusal doesn't flash a half-written answer.
+- `done` — exactly the `POST /ask` body. Its `answer` is the validated one (citation numbers that point
+  at no source removed), so a client replaces the streamed text with it.
+- `error` — the stream failed after it started (status is already 200 by then).
+
+It is a POST, so read it with `fetch` and a stream reader, not `EventSource` (GET only). Closing the
+connection aborts the request to Ollama, so an abandoned question stops using the CPU.
+
+Measured on M1 Pro (`qwen3:8b`, warm): sources at ~10–13 s, first words at ~25 s, last at ~34 s — the
+same total as before, but with something on screen. The gap between sources and first words is
+prompt processing: Ollama reads ~230 tokens/s, and six chunks are ~1.5–3k tokens. Streaming can't
+hide that; fewer or shorter chunks in the prompt can.
 
 `CHAT_NUM_CTX` (default 8192) sets the chat model's context window explicitly: Ollama silently drops
 the start of a prompt that does not fit, and six chunks come to ~1.5–4k tokens.

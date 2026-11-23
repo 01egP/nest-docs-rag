@@ -64,3 +64,48 @@ describe('POST /ask', () => {
     expect(res.body).not.toContain('secret detail');
   });
 });
+
+/** SSE body → [event, data] pairs. */
+const parseSse = (body: string) =>
+  body
+    .split('\n\n')
+    .filter((block) => block.startsWith('event:'))
+    .map((block) => {
+      const [event, data] = block.split('\n');
+      return [event!.slice('event: '.length), JSON.parse(data!.slice('data: '.length))] as const;
+    });
+
+describe('POST /ask/stream', () => {
+  const stream = (app: ReturnType<typeof server>, payload: unknown) =>
+    app.inject({ method: 'POST', url: '/ask/stream', payload: payload as object });
+
+  it('sends sources, answer text and the final result as server-sent events', async () => {
+    const app = server(async () => ({
+      text: JSON.stringify({ answerable: true, answer: 'Guards decide [1].', citations: [1] }),
+      model: 'g',
+    }));
+    const res = await stream(app, { question: 'How do guards work?' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toMatch(/^text\/event-stream/);
+    const events = parseSse(res.body);
+    expect(events.map(([e]) => e)).toEqual(['retrieval', 'delta', 'done']);
+    expect(events[0]![1].retrieval.sources[0]).toMatchObject({ n: 1 });
+    expect(events[1]![1]).toEqual({ text: 'Guards decide [1].' });
+    expect(events[2]![1]).toMatchObject({ answered: true, answer: 'Guards decide [1].' });
+  });
+
+  it('rejects a bad body with 400 before streaming', async () => {
+    const res = await stream(server(vi.fn()), { question: ' ' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('ends with an error event when the model fails, without leaking the error', async () => {
+    const app = server(async () => {
+      throw new Error('Ollama /api/chat: HTTP 500 secret detail');
+    });
+    const res = await stream(app, { question: 'How do guards work?' });
+    expect(parseSse(res.body).map(([e]) => e)).toEqual(['retrieval', 'error']);
+    expect(res.body).not.toContain('secret detail');
+  });
+});

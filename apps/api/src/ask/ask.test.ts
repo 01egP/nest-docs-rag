@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Embedder, GenerateRequest, Generator } from '../providers/types.js';
 import {
   ask,
+  askStream,
   buildPrompt,
   defaultMinScore,
   notInDocsMessage,
   parseAnswer,
   RERANKER_MIN_SCORE,
   type AskDeps,
+  type AskEvent,
 } from './ask.js';
 
 const D = 'https://docs.nestjs.com';
@@ -168,5 +170,72 @@ describe('ask', () => {
     const { d } = deps({ answerable: true, answer: 'Just use Express.', citations: [9] });
     const r = await ask(d, 'How do I apply a guard globally?');
     expect(r).toMatchObject({ answered: false, reason: 'no_citations', citations: [] });
+  });
+});
+
+describe('askStream', () => {
+  const collect = async (events: AsyncIterable<AskEvent>) => {
+    const out: AskEvent[] = [];
+    for await (const e of events) out.push(e);
+    return out;
+  };
+
+  /** A generator that streams its JSON answer in small pieces, like Ollama with `stream: true`. */
+  function streaming(modelAnswer: object): Generator {
+    const text = JSON.stringify(modelAnswer);
+    return {
+      id: 'fake:s',
+      model: 's',
+      generate: vi.fn(),
+      async *stream() {
+        for (let i = 0; i < text.length; i += 5)
+          yield { type: 'delta', text: text.slice(i, i + 5) };
+        yield { type: 'done', result: { text, model: 's', usage: { outputTokens: 9 } } };
+      },
+    };
+  }
+
+  it('sends the sources first, then the answer text, then the final result', async () => {
+    const generator = streaming({
+      answerable: true,
+      answer: 'Use APP_GUARD [2] or a decorator [9].',
+      citations: [2],
+    });
+    const { d } = deps({}, { generator });
+    const events = await collect(askStream(d, 'How do I apply a guard globally?'));
+
+    expect(events[0]).toMatchObject({ type: 'retrieval', retrieval: { topScore: 0.7 } });
+    expect(events.at(-1)!.type).toBe('done');
+    const text = events.flatMap((e) => (e.type === 'delta' ? [e.text] : [])).join('');
+    expect(text).toBe('Use APP_GUARD [2] or a decorator [9].');
+    // The final answer is validated: [9] points at no source and is gone.
+    const done = events.at(-1) as Extract<AskEvent, { type: 'done' }>;
+    expect(done.result).toMatchObject({
+      answered: true,
+      answer: 'Use APP_GUARD [2] or a decorator.',
+    });
+    expect(generator.generate).not.toHaveBeenCalled();
+  });
+
+  it('sends no text for a refusal by the model', async () => {
+    const { d } = deps(
+      {},
+      { generator: streaming({ answerable: false, answer: 'Angular…', citations: [] }) },
+    );
+    const events = await collect(askStream(d, 'Lazy routes in Angular?'));
+    expect(events.map((e) => e.type)).toEqual(['retrieval', 'done']);
+    expect(events[1]).toMatchObject({ result: { reason: 'model_declined' } });
+  });
+
+  it('streams a generator without `stream` as one piece', async () => {
+    const { d } = deps({ answerable: true, answer: 'Guards [1].', citations: [1] });
+    const events = await collect(askStream(d, 'How do guards work?'));
+    expect(events.map((e) => e.type)).toEqual(['retrieval', 'delta', 'done']);
+  });
+
+  it('stops after the sources when below the threshold', async () => {
+    const { d } = deps({}, { minScore: 0.8 });
+    const events = await collect(askStream(d, 'Как приготовить борщ?'));
+    expect(events.map((e) => e.type)).toEqual(['retrieval', 'done']);
   });
 });
