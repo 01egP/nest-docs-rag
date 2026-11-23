@@ -5,9 +5,95 @@ documentation, with citations — or says the docs don't cover it. Runs fully lo
 embeddings and answers, Postgres + pgvector for search. Answers can also come from a hosted model
 through any OpenAI-compatible API, while search stays local.
 
-> Work in progress. Done so far: repo scaffold, provider interfaces, local Ollama implementations,
-> indexing of the docs into pgvector, top-k search with cross-encoder reranking, a retrieval eval,
-> `POST /ask` with citations, streamed as server-sent events, a web page on top of the stream.
+What it does:
+
+- **Indexes** the NestJS docs into Postgres + pgvector: chunked by heading, synced by content hash.
+- **Searches** in two stages: vector top-30, then a cross-encoder reranker picks the top 6.
+- **Answers** through `POST /ask` / `POST /ask/stream` (server-sent events) with numbered citations
+  that the server checks, and refuses in two steps when the docs don't cover the question.
+- **Measures** retrieval with `npm run eval` (hit@k, MRR) and compares embedding models, chunk sizes
+  and index settings one factor at a time — results below.
+- **Shows** it all on a small React page: sources first, then the answer as it is written.
+
+No LangChain / LlamaIndex: chunking, prompts, search and the model calls are plain TypeScript over
+`fetch`, because seeing each step was the point.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph ingest["npm run ingest"]
+    direction TB
+    src["docs.nestjs.com repo<br/>(shallow clone)"] --> clean["clean markdown"]
+    clean --> chunk["chunk by heading<br/>~700 tokens"]
+    chunk --> embedDocs["embed: heading path + text"]
+  end
+
+  subgraph ask["POST /ask/stream"]
+    direction TB
+    q["question"] --> embedQ["embed question"]
+    embedQ --> knn["top 30 by cosine"]
+    knn --> rerank["cross-encoder rerank<br/>one chunk per section → top 6"]
+    rerank --> gate{"best score ≥<br/>ASK_MIN_SCORE?"}
+    gate -- no --> refuse["not in the docs<br/>(LLM not called)"]
+    gate -- yes --> llm["LLM, structured output<br/>{answerable, answer, citations}"]
+    llm --> check["keep only citations that<br/>point at sent chunks"]
+  end
+
+  embedDocs --> db[("Postgres + pgvector<br/>chunks_bge_m3, HNSW")]
+  db --> knn
+  check -- SSE --> web["React page"]
+  refuse -- SSE --> web
+```
+
+Four processes on one machine:
+
+| Piece       | Runs as                       | Does                                                                  |
+| ----------- | ----------------------------- | --------------------------------------------------------------------- |
+| `apps/api`  | Node, Fastify                 | ingest / eval scripts, search, the reranker (in-process ONNX), `/ask` |
+| Postgres 17 | Docker, `127.0.0.1:5433` only | one table per index (`chunks_<model>[_<suffix>]`), HNSW cosine index  |
+| Ollama      | local service                 | embeddings (`bge-m3`) and, by default, the answer model (`qwen3:8b`)  |
+| `apps/web`  | Vite dev server               | the ask page; proxies `/api/*` to the API                             |
+
+The answer step can go to a hosted model instead of Ollama; embeddings, the index and the reranker
+stay local either way.
+
+Code map (`apps/api/src`):
+
+- `providers/` — `Embedder`, `Generator`, `Reranker` interfaces (`types.ts`) and their implementations:
+  `ollama/`, `openai/` (any OpenAI-compatible API), `transformers/` (the reranker); picked in
+  `index.ts` from env.
+- `ingest/` — `source.ts` (clone, page list and URLs from the site's sidebar), `markdown.ts`
+  (cleaning), `chunker.ts`, `store.ts` (table per index, sync by hash).
+- `search/search.ts` — vector search, reranking, one chunk per section.
+- `ask/ask.ts` — threshold, prompt, citation check; `partial-answer.ts` reads the answer out of
+  unfinished JSON for streaming.
+- `eval/metrics.ts`, `scripts/eval.ts` — hit@k / MRR over `eval/questions.json`.
+- `server.ts` — `/health`, `/ask`, `/ask/stream`; `config.ts` — env, validated with zod.
+
+### Design decisions
+
+- **A table per embedding model and setting.** Vectors of different models live in different spaces
+  and pgvector fixes the dimension in the column type, so each index is its own table with its own
+  HNSW index. Comparing models is comparing tables; a query vector can't meet another model's chunks.
+- **Providers behind interfaces, no SDKs.** The pipeline knows `Embedder` / `Generator` / `Reranker`
+  only; Ollama and the OpenAI-compatible API are a few `fetch` calls each. Switching model or provider
+  is an `.env` change, and the eval runs the same pipeline for all of them.
+- **Two-stage search.** Vector search finds the right page among 30 candidates but often not in the
+  top 6, and its cosine score can't tell a real question from one about a neighbouring framework. A
+  cross-encoder reads question and chunk together: hit@6 80% → 100%, and its score separates
+  answerable from off-topic questions. It costs ~8 s per question on CPU (see Limitations).
+- **Two refusals.** A score threshold before the LLM drops clearly unrelated questions for free; an
+  `answerable` field in the answer schema catches the rest (same vocabulary, different framework).
+  Small local models don't follow "say you don't know" reliably as a prompt instruction alone.
+- **Citations by number, resolved by the server.** The model sees numbered chunks without URLs and
+  returns numbers; the server keeps only numbers it actually sent and attaches the URL and text, so a
+  source can't be invented.
+- **Stream the same JSON.** Streaming keeps the structured output the quality was measured on; the
+  server reads the growing `answer` string out of the unfinished JSON instead of switching the model
+  to free text.
+- **Hosted generation only.** A hosted model fixes the slow part (generation) without touching the
+  index; the hosted API has no embeddings anyway, and local search is ~10 ms.
 
 ## Stack
 
@@ -306,3 +392,30 @@ non-default search setting (`raw`, `p2`, `rr`, `n20`). `npm run eval -- --report
 runs as one Markdown table.
 
 `npm test`, `npm run typecheck`, `npm run format:check` — the usual checks.
+
+## Limitations
+
+- **Latency.** Reranking is ~8 s per question on an M1 Pro CPU (30 pairs, one at a time); with the
+  local model a full answer takes 17–45 s, with a hosted one 10–16 s. Streaming shows the sources
+  first, but the wait is real.
+- **A small question set.** 15 questions are enough to see large effects (the reranker, multilingual
+  models), not to tell a 0.05 MRR gap from noise — so the best measured setup (400-token chunks +
+  reranker) is not the default yet.
+- **Answers spread across pages** get low reranker scores, since no single chunk answers them; they
+  pass the threshold today, but with little margin.
+- **Retrieval is measured, answers are checked by hand.** The eval scores search; `/ask` was run on
+  the same 15 questions and read, not scored automatically.
+- **Answer details.** The model sometimes copies relative links from the docs (`/fundamentals/…`),
+  and long answers in Russian don't always place `[n]` markers in the text (the citation list still
+  comes back).
+- **A local, single-user tool.** No auth, no rate limits, no deployment; the database listens on
+  loopback only.
+
+Next, roughly in order: a larger question set (~25), then switching to 400-token chunks; a smaller
+prompt (fewer or trimmed chunks) for a faster first word; hybrid search (vectors + Postgres full-text);
+a cache of reranker scores in the eval.
+
+## License
+
+[MIT](LICENSE). The NestJS documentation that the index is built from is MIT-licensed as well; it is
+cloned at ingest time and not stored in this repository.
