@@ -7,7 +7,7 @@ through any OpenAI-compatible API, while search stays local.
 
 > Work in progress. Done so far: repo scaffold, provider interfaces, local Ollama implementations,
 > indexing of the docs into pgvector, top-k search with cross-encoder reranking, a retrieval eval,
-> `POST /ask` with citations, streamed as server-sent events. Next: the web page.
+> `POST /ask` with citations, streamed as server-sent events, a web page on top of the stream.
 
 ## Stack
 
@@ -39,7 +39,7 @@ npm run db:up        # Postgres + pgvector on localhost:5433
 npm run smoke        # embed + rank two passages, then a JSON answer from the chat model
 npm run ingest       # clone the NestJS docs, chunk, embed into pgvector (a few minutes the first time)
 npm run dev:api      # http://127.0.0.1:3000/health, POST /ask, POST /ask/stream
-npm run dev:web      # http://localhost:5173
+npm run dev:web      # http://localhost:5173 — the ask page (proxies /api/* to the API)
 ```
 
 ## Indexing
@@ -196,6 +196,27 @@ All 15 eval questions through `/ask`, same index and reranker:
 With a hosted model the answer is no longer the slow part: reranking is (~8 s of the ~12 s). Streaming
 helps less too — with structured output the first piece arrives ~3 s after the request, and the rest
 within a second or two.
+
+## Web page
+
+`apps/web` is one page over `POST /ask/stream`: a question box, then the sources as soon as search is
+done, the answer text as the model writes it, and the final answer with `[n]` linked to its sources
+(the uncited ones dimmed) — or the refusal with its reason. A status line says which step the wait is
+in (searching / the model is reading the sources / writing) with a running timer; under the answer
+are the timings, the generator and its token counts. A new question, **Stop**, or leaving the page
+aborts the request, and the server stops generating.
+
+- `src/api/sse.ts` — reads a `text/event-stream` body from `fetch`: events cut anywhere by the
+  network, a Cyrillic letter split between pieces, CRLF / CR, comments, multi-line `data`.
+- `src/api/ask-stream.ts` — the endpoint as typed events; a 4xx/5xx before the stream (e.g. an empty
+  question) throws with the server's message.
+- `src/ask/state.ts` — a reducer: `idle → searching → answering → done`, or `error` / `cancelled`
+  keeping the sources and the partial text; late events after Stop are ignored.
+- `src/ask/answer-text.ts` — the little Markdown the answers use (`inline code`, ``` fences, also an
+  unclosed one mid-stream) and `[n]` markers, without a Markdown library.
+
+In development Vite proxies `/api/*` to the API, so no CORS setup is needed and the stream is not
+buffered. `npm test -w apps/web` runs the page's unit tests (vitest).
 
 ## Evaluation
 
