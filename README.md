@@ -21,16 +21,15 @@ No LangChain / LlamaIndex: chunking, prompts, search and the model calls are pla
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TB
   subgraph ingest["npm run ingest"]
-    direction TB
+    direction LR
     src["docs.nestjs.com repo<br/>(shallow clone)"] --> clean["clean markdown"]
     clean --> chunk["chunk by heading<br/>~700 tokens"]
     chunk --> embedDocs["embed: heading path + text"]
   end
 
   subgraph ask["POST /ask/stream"]
-    direction TB
     q["question"] --> embedQ["embed question"]
     embedQ --> knn["top 30 by cosine"]
     knn --> rerank["cross-encoder rerank<br/>one chunk per section → top 6"]
@@ -40,7 +39,8 @@ flowchart LR
     llm --> check["keep only citations that<br/>point at sent chunks"]
   end
 
-  embedDocs --> db[("Postgres + pgvector<br/>chunks_bge_m3, HNSW")]
+  %% link the subgraph itself, not a node inside it, so its LR direction is kept
+  ingest --> db[("Postgres + pgvector<br/>chunks_bge_m3, HNSW")]
   db --> knn
   check -- SSE --> web["React page"]
   refuse -- SSE --> web
